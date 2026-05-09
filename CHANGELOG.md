@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.1 — 2026-05-09
+
+Hotfix.
+
+- **Top of the right column was hidden behind the bottom panel.**
+  v0.2.0 nested the right column as a `Container` with a `VBox` child,
+  and the VBox ignored its `x/y` config and rendered at (0, 0) of the
+  parent — overlapping the momentum / cast / effects widgets. Replaced
+  the nested layout with a single Container with absolute-positioned
+  children, all visible.
+- **Momentum click callbacks** now use closures instead of
+  `setClickCallback("dotted.path")`, which doesn't resolve table
+  members in current Mudlet.
+
 ## v0.2.0 — 2026-05-09
 
 Bug-fix + feature release.

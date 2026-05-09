@@ -17,7 +17,7 @@
     <packageName>Icesus</packageName>
     <script><![CDATA[
 -- Icesus Mudlet package — core
--- v0.2.0  •  https://github.com/Icesus-mud/mudlet-package
+-- v0.2.1  •  https://github.com/Icesus-mud/mudlet-package
 --
 -- One Lua script defines the whole package. Everything lives under the
 -- global `icesus` table. On (re)load the previous instance is torn down
@@ -25,7 +25,7 @@
 -- Mudlet's IDE replaces the running HUD cleanly.
 
 icesus = icesus or {}
-icesus.version = "0.2.0"
+icesus.version = "0.2.1"
 
 -- Hot-reload teardown.
 if type(icesus.teardown) == "function" then pcall(icesus.teardown) end
@@ -36,7 +36,6 @@ if type(icesus.teardown) == "function" then pcall(icesus.teardown) end
 icesus.config = {
   borderRight  = 320,    -- right column width (px)
   borderBottom = 36,     -- vitals row height (px)
-  topPanelH    = 92,     -- right column top: momentum + cast + effects
   channelLines = 500,
   channelTimes = true,
 }
@@ -88,7 +87,6 @@ function icesus.setupHUD()
 
   local R = icesus.config.borderRight
   local B = icesus.config.borderBottom
-  local T = icesus.config.topPanelH
 
   setBorderRight(R)
   setBorderBottom(B)
@@ -121,29 +119,36 @@ function icesus.setupHUD()
   icesus.hud.sp = makeGauge("sp", "SP", "#2563eb")
   icesus.hud.ep = makeGauge("ep", "EP", "#a855f7")
 
-  -- ----- right column container -----
+  -- ----- right column: ONE container, every panel absolute-positioned.
+  -- Nested HBox/VBox inside a Container don't honour x/y in some Mudlet
+  -- versions, so the previous nested layout had the bottom panel
+  -- overlapping the top panel. Flat layout removes that footgun.
   icesus.hud.right = Geyser.Container:new({
     name = "icesus.right",
     x = "-" .. R, y = 0,
     width = R,
     height = "100%-" .. B,
   })
-  icesus.hud.right:setStyleSheet("background-color: #0d0d0d;")
 
-  -- ----- top panel: momentum + cast + effects (fixed-height block) -----
-  icesus.hud.topPanel = Geyser.Container:new({
-    name = "icesus.topPanel",
-    x = 0, y = 0, width = "100%", height = T,
-  }, icesus.hud.right)
+  -- Geometry constants for the right column.
+  local PAD       = 4
+  local BTN_H     = 28
+  local CAST_H    = 24
+  local EFFECTS_H = 24
+  local ENEMY_H   = 220
+  local btnY      = PAD                                    -- 4
+  local castY     = btnY + BTN_H + PAD                     -- 36
+  local effectsY  = castY + CAST_H + PAD                   -- 64
+  local enemyY    = effectsY + EFFECTS_H + PAD             -- 92
+  local channelsY = enemyY + ENEMY_H + PAD                 -- 316
 
-  -- Momentum row: two side-by-side clickable labels.
-  icesus.hud.momentumRow = Geyser.HBox:new({
-    name = "icesus.momentumRow",
-    x = 4, y = 4, width = "100%-8", height = 28,
-  }, icesus.hud.topPanel)
-
-  local function makeMomentumBtn(key)
-    local btn = Geyser.Label:new({ name = "icesus." .. key }, icesus.hud.momentumRow)
+  -- Two side-by-side momentum buttons, absolutely positioned.
+  local btnW = math.floor((R - PAD * 3) / 2)               -- e.g. 156
+  local function makeMomentumBtn(key, x)
+    local btn = Geyser.Label:new({
+      name = "icesus." .. key,
+      x = x, y = btnY, width = btnW, height = BTN_H,
+    }, icesus.hud.right)
     btn:setStyleSheet([[
       background-color: #1a1a1a;
       color: #555;
@@ -157,16 +162,19 @@ function icesus.setupHUD()
     return btn
   end
 
-  icesus.hud.momentumBtn        = makeMomentumBtn("momentumBtn")
-  icesus.hud.specialMomentumBtn = makeMomentumBtn("specialMomentumBtn")
-  icesus.hud.momentumBtn:setClickCallback("icesus.useMomentum")
-  icesus.hud.specialMomentumBtn:setClickCallback("icesus.useSpecialMomentum")
+  icesus.hud.momentumBtn        = makeMomentumBtn("momentumBtn",        PAD)
+  icesus.hud.specialMomentumBtn = makeMomentumBtn("specialMomentumBtn", PAD * 2 + btnW)
+  -- Closures: the icesus.useMomentum etc. functions are defined later
+  -- in this file. Looking them up at click-time (not now) lets the
+  -- order in this script not matter.
+  icesus.hud.momentumBtn:setClickCallback(function() icesus.useMomentum() end)
+  icesus.hud.specialMomentumBtn:setClickCallback(function() icesus.useSpecialMomentum() end)
 
   -- Cast bar.
   icesus.hud.castGauge = Geyser.Gauge:new({
     name = "icesus.castGauge",
-    x = 4, y = 36, width = "100%-8", height = 24,
-  }, icesus.hud.topPanel)
+    x = PAD, y = castY, width = R - PAD * 2, height = CAST_H,
+  }, icesus.hud.right)
   icesus.hud.castGauge.front:setStyleSheet(
     "background-color: #7c3aed; border: 1px solid #111; border-radius: 2px;")
   icesus.hud.castGauge.back:setStyleSheet(
@@ -182,11 +190,13 @@ function icesus.setupHUD()
   -- Status effects strip.
   icesus.hud.effectsRow = Geyser.Label:new({
     name = "icesus.effectsRow",
-    x = 4, y = 64, width = "100%-8", height = 24,
-  }, icesus.hud.topPanel)
+    x = PAD, y = effectsY, width = R - PAD * 2, height = EFFECTS_H,
+  }, icesus.hud.right)
   icesus.hud.effectsRow:setStyleSheet([[
     background-color: #0d0d0d;
     color: #888;
+    border: 1px solid #1a1a1a;
+    border-radius: 3px;
     font-family: "DejaVu Sans Mono", monospace;
     font-size: 9pt;
     qproperty-alignment: 'AlignCenter';
@@ -194,27 +204,15 @@ function icesus.setupHUD()
   icesus.hud.effectsRow:echo(
     [[<center><span style="color:#444">no effects</span></center>]])
 
-  -- ----- bottom panel: enemies + channels -----
-  icesus.hud.bottomPanel = Geyser.VBox:new({
-    name = "icesus.bottomPanel",
-    x = 0, y = T, width = "100%",
-    height = "100%-" .. T,
-  }, icesus.hud.right)
-
-  icesus.hud.enemyBox = Geyser.Container:new({
-    name = "icesus.enemyBox",
-    height = "40%",
-  }, icesus.hud.bottomPanel)
-  icesus.hud.enemyBox:setStyleSheet(
-    "background-color: #1a1a1a; border: 1px solid #2a2a2a;")
-
+  -- Enemy panel — fixed height block.
   icesus.hud.enemyLabel = Geyser.Label:new({
     name = "icesus.enemyLabel",
-    x = 4, y = 4, width = "100%-8", height = "100%-8",
-  }, icesus.hud.enemyBox)
+    x = 0, y = enemyY, width = "100%", height = ENEMY_H,
+  }, icesus.hud.right)
   icesus.hud.enemyLabel:setStyleSheet([[
     background-color: #1a1a1a;
     color: #ddd;
+    border: 1px solid #2a2a2a;
     font-family: "DejaVu Sans Mono", monospace;
     font-size: 10pt;
     qproperty-alignment: 'AlignTop';
@@ -222,12 +220,15 @@ function icesus.setupHUD()
   icesus.hud.enemyLabel:echo(
     [[<center><span style="color:#666">no targets</span></center>]])
 
+  -- Channels — fills the rest of the right column.
   icesus.hud.channels = Geyser.MiniConsole:new({
     name = "icesus.channels",
+    x = 0, y = channelsY, width = "100%",
+    height = "100%-" .. channelsY,
     autoWrap = true,
     fontSize = 10,
     color = "#0d0d0d",
-  }, icesus.hud.bottomPanel)
+  }, icesus.hud.right)
   icesus.hud.channels:setBufferSize(icesus.config.channelLines, icesus.config.channelLines)
   icesus.hud.channels:cecho("<grey>--- Icesus channels (Comm.Channel) ---<reset>\n")
 end
