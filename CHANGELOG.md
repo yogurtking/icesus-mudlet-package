@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.2.0 — 2026-05-09
+
+Bug-fix + feature release.
+
+**Fixes**
+
+- **Vitals gauges actually update.** v0.1 read `gmcp.Char.Vitals.sp`
+  and `.ep`; the server sends `mana` and `moves` (per `gmcp_d.c`).
+  All three gauges now show real values.
+- **Bars no longer 64 px tall.** Bottom border reduced from 64 to 36 px
+  with the gauges filling it; gauges start empty (0 / 1) instead of
+  full (1 / 1) so an unconnected install reads correctly.
+- **Bottom row no longer overlaps the right column.** Bottom HBox now
+  ends at `100% - borderRight` instead of stretching the full width.
+
+**New**
+
+- **Momentum buttons.** Two clickable labels on the right column light
+  up when `Char.Status.momentum` / `special_momentum` are set; click
+  fires `use <name>`.
+- **Casting / busy bar.** Fills over `Char.Casting.progress / cps`,
+  clears on completion or interruption.
+- **Status effects strip.** Renders badges for `Char.Status.effects`.
+- **`Core.Hello` on connect** so the server identifies us as Mudlet.
+
 ## v0.1.0 — 2026-05-09
 
 First public release. Feedback build.
@@ -9,6 +34,5 @@ First public release. Feedback build.
   HP rendered to the server's 12-tier shape buckets, colour-coded.
 - Channel feed in a side miniconsole from `Comm.Channel`, with optional
   timestamps.
-- Geyser-based HUD: 320 px right border, 64 px bottom border. Hot-reload
-  safe — editing the script in Mudlet rebuilds the HUD.
+- Geyser HUD: hot-reload safe.
 - GMCP subscriptions: `Char 1`, `Char.Vitals 1`, `Comm 1`, `Room 1`.

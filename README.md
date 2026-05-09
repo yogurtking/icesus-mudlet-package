@@ -8,16 +8,25 @@ This is **v0.1** — the first feedback release. It ships a small core
 that's strictly better than vanilla Mudlet; everything else (cooldowns,
 casting, party, outworld minimap, sound, themes) is open for contribution.
 
-## What's in v0.1
+## What's in v0.2
 
 - **Vitals gauges** — HP / SP / EP, fed by `Char.Vitals` + `Char.Maxstats`.
-- **Enemy panel** — one bar per opponent from `Char.Status.enemies`,
-  using the server's 12-tier shape buckets so the bar can't pretend to
-  know more than `consider` would tell you. Cleared by `Char.EnemyDeath`.
+- **Monster health bars** — one bar per opponent from
+  `Char.Status.enemies`, using the server's 12-tier shape buckets so the
+  bar can't pretend to know more than `consider` would tell you. Cleared
+  by `Char.EnemyDeath`.
+- **Momentum buttons** — clickable "use momentum" / "use special
+  momentum" labels that light up when `Char.Status.momentum` /
+  `special_momentum` are set, and send `use <name>` on click.
+- **Casting / busy bar** — fills over `Char.Casting.progress / cps` while
+  a spell or skill is in progress; goes empty on completion or
+  interruption.
+- **Status effects strip** — badges for every entry in
+  `Char.Status.effects` (bleeding, stunned, etc.).
 - **Channel feed** — every channel + say + tell + whisper from
   `Comm.Channel` echoed into a side miniconsole, with timestamps.
 
-The HUD reserves 320 px on the right and 64 px on the bottom; the main
+The HUD reserves 320 px on the right and 36 px on the bottom; the main
 game window keeps everything else and renders untouched, so existing
 prompts and scripts still work.
 
@@ -77,17 +86,16 @@ The next features in priority order, all of them welcome PRs:
    mirrored, not routed. A trigger group that gags `Comm.Channel`-paired
    text lines would let players use the side console exclusively.
 2. **Cooldown panel** — `Char.Cooldowns`, mm:ss tickers, client-side.
-3. **Casting / busy bar** — `Char.Casting`, fills over duration.
-4. **Identity row** — name / title / level / money / carry / conditions
+3. **Identity row** — name / title / level / money / carry / conditions
    from `Char.Base` + `Char.Status`.
-5. **Room panel** — name + exits as clickable buttons, from `Room.Info`.
-6. **Outworld minimap** — Geyser miniconsole rendering the LOS-visible
+4. **Room panel** — name + exits as clickable buttons, from `Room.Info`.
+5. **Outworld minimap** — Geyser miniconsole rendering the LOS-visible
    grid. Render-only first, fog-of-war later.
-7. **Party panel** — `Party.Info` with HP bars per member.
-8. **Sound pack** — level-up, channel mention, death, combat-enter cues.
-9. **Theme switcher** — light / dark / high-contrast.
-10. **`Client.Triggers` / `Client.Hotkeys` GMCP sync** — triggers and
-    hotkeys roam between the web client and Mudlet.
+6. **Party panel** — `Party.Info` with HP bars per member.
+7. **Sound pack** — level-up, channel mention, death, combat-enter cues.
+8. **Theme switcher** — light / dark / high-contrast.
+9. **`Client.Triggers` / `Client.Hotkeys` GMCP sync** — triggers and
+   hotkeys roam between the web client and Mudlet.
 
 See `docs/design.md` for the longer-term plan.
 
