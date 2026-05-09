@@ -1,0 +1,348 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE MudletPackage>
+<MudletPackage version="1.001">
+ <TriggerPackage></TriggerPackage>
+ <TimerPackage></TimerPackage>
+ <AliasPackage></AliasPackage>
+ <ActionPackage></ActionPackage>
+ <ScriptPackage>
+  <ScriptGroup isActive="yes" isFolder="yes">
+   <name>Icesus</name>
+   <packageName>Icesus</packageName>
+   <script></script>
+   <eventHandlerList />
+
+   <Script isActive="yes" isFolder="no">
+    <name>icesus.core</name>
+    <packageName>Icesus</packageName>
+    <script><![CDATA[
+-- Icesus Mudlet package — core
+-- v0.1.0  •  https://github.com/Icesus-mud/mudlet-package
+--
+-- One Lua script defines the whole package. Everything lives under the
+-- global table `icesus`. On (re)load, the previous instance is torn down
+-- and a fresh one installed, so editing this script and saving in
+-- Mudlet's IDE replaces the running HUD cleanly.
+
+icesus = icesus or {}
+icesus.version = "0.1.0"
+
+-- =============================================================
+-- Hot-reload: tear down the previous instance if present.
+-- =============================================================
+if type(icesus.teardown) == "function" then
+  pcall(icesus.teardown)
+end
+
+-- =============================================================
+-- Config — tweak in your private session, or PR upstream defaults.
+-- =============================================================
+icesus.config = {
+  borderRight  = 320,   -- pixels reserved on the right for enemy/channel panels
+  borderBottom = 64,    -- pixels reserved on the bottom for vitals gauges
+  channelLines = 500,   -- buffer size for the channel miniconsole
+  channelTimes = true,  -- prefix channel lines with HH:MM
+}
+
+-- =============================================================
+-- Internal state.
+-- =============================================================
+icesus.state = {
+  vitals  = { hp = 0, hpmax = 0, sp = 0, spmax = 0, ep = 0, epmax = 0 },
+  enemies = {},
+  inCombat = false,
+}
+icesus.hud      = nil
+icesus.handlers = {}
+
+-- =============================================================
+-- Shape buckets — must match adm/daemons/gmcp_d.c:411-427.
+-- The server quantizes enemy HP to these tiers; the client
+-- should not pretend to know more.
+-- =============================================================
+icesus.shapeColors = {
+  [100] = "#22c55e",  -- excellent
+  [99]  = "#4ade80",  -- good
+  [90]  = "#a3e635",  -- slightly hurt
+  [80]  = "#d9f99d",  -- moderately hurt
+  [70]  = "#facc15",  -- not good
+  [60]  = "#f59e0b",  -- severely hurt
+  [50]  = "#fb923c",  -- bad
+  [40]  = "#f97316",  -- very bad
+  [30]  = "#ef4444",  -- extremely bad
+  [20]  = "#dc2626",  -- gravely wounded
+  [10]  = "#b91c1c",  -- almost dead
+  [5]   = "#7f1d1d",  -- dead meat
+}
+
+local function shapeColor(pct)
+  -- Snap arbitrary pct to the nearest defined bucket below it.
+  local last = "#7f1d1d"
+  for _, b in ipairs({100, 99, 90, 80, 70, 60, 50, 40, 30, 20, 10, 5}) do
+    if pct >= b then return icesus.shapeColors[b] end
+    last = icesus.shapeColors[b]
+  end
+  return last
+end
+
+-- =============================================================
+-- HUD construction.
+-- =============================================================
+function icesus.setupHUD()
+  if icesus.hud then return end
+  icesus.hud = {}
+
+  setBorderRight(icesus.config.borderRight)
+  setBorderBottom(icesus.config.borderBottom)
+
+  -- ----- bottom: vitals gauges -----
+  icesus.hud.bottom = Geyser.HBox:new({
+    name = "icesus.bottom",
+    x = 0, y = "-" .. icesus.config.borderBottom,
+    width = "100%", height = icesus.config.borderBottom,
+  })
+
+  local function makeGauge(key, label, fill, back)
+    local g = Geyser.Gauge:new({ name = "icesus." .. key }, icesus.hud.bottom)
+    g.front:setStyleSheet(string.format([[
+      background-color: %s;
+      border: 1px solid #111;
+      border-radius: 3px;
+    ]], fill))
+    g.back:setStyleSheet(string.format([[
+      background-color: %s;
+      border: 1px solid #111;
+      border-radius: 3px;
+    ]], back))
+    g.text:setStyleSheet([[
+      color: #fff;
+      font-family: "DejaVu Sans Mono", monospace;
+      font-size: 11pt;
+      qproperty-alignment: 'AlignCenter';
+    ]])
+    g:setValue(1, 1, label)
+    return g
+  end
+
+  icesus.hud.hp = makeGauge("hp", "HP", "#16a34a", "#1a1a1a")
+  icesus.hud.sp = makeGauge("sp", "SP", "#2563eb", "#1a1a1a")
+  icesus.hud.ep = makeGauge("ep", "EP", "#a855f7", "#1a1a1a")
+
+  -- ----- right column -----
+  icesus.hud.right = Geyser.VBox:new({
+    name = "icesus.right",
+    x = "-" .. icesus.config.borderRight, y = 0,
+    width = icesus.config.borderRight,
+    height = "100%-" .. icesus.config.borderBottom,
+  })
+
+  -- Enemy panel: a single Label whose HTML is rebuilt on each Status.
+  icesus.hud.enemyBox = Geyser.Container:new({
+    name = "icesus.enemyBox",
+    height = "40%",
+  }, icesus.hud.right)
+  icesus.hud.enemyBox:setStyleSheet("background-color: #1a1a1a; border: 1px solid #333;")
+
+  icesus.hud.enemyLabel = Geyser.Label:new({
+    name = "icesus.enemyLabel",
+    x = 4, y = 4,
+    width = "100%-8", height = "100%-8",
+  }, icesus.hud.enemyBox)
+  icesus.hud.enemyLabel:setStyleSheet([[
+    background-color: #1a1a1a;
+    color: #ddd;
+    font-family: "DejaVu Sans Mono", monospace;
+    font-size: 10pt;
+    qproperty-alignment: 'AlignTop';
+  ]])
+  icesus.hud.enemyLabel:echo([[<center><span style="color:#666">no targets</span></center>]])
+
+  -- Channel miniconsole.
+  icesus.hud.channels = Geyser.MiniConsole:new({
+    name = "icesus.channels",
+    autoWrap = true,
+    fontSize = 10,
+    color = "#0d0d0d",
+  }, icesus.hud.right)
+  icesus.hud.channels:setBufferSize(icesus.config.channelLines, icesus.config.channelLines)
+  icesus.hud.channels:cecho("<grey>--- Icesus channels (Comm.Channel) ---<reset>\n")
+end
+
+function icesus.teardownHUD()
+  if not icesus.hud then return end
+  for _, w in pairs(icesus.hud) do
+    if w and type(w.hide) == "function" then pcall(function() w:hide() end) end
+  end
+  icesus.hud = nil
+  setBorderSizes(0, 0, 0, 0)
+end
+
+-- =============================================================
+-- Render.
+-- =============================================================
+function icesus.refreshGauges()
+  if not icesus.hud then return end
+  local s = icesus.state.vitals
+  local function setG(g, cur, max, label)
+    if not g then return end
+    local m = math.max(max, 1)
+    g:setValue(math.min(cur, m), m, string.format("%s  %d / %d", label, cur, max))
+  end
+  setG(icesus.hud.hp, s.hp, s.hpmax, "HP")
+  setG(icesus.hud.sp, s.sp, s.spmax, "SP")
+  setG(icesus.hud.ep, s.ep, s.epmax, "EP")
+end
+
+function icesus.refreshEnemies()
+  if not icesus.hud or not icesus.hud.enemyLabel then return end
+  local enemies = icesus.state.enemies
+  if #enemies == 0 then
+    icesus.hud.enemyLabel:echo(
+      [[<center><span style="color:#666">no targets</span></center>]])
+    return
+  end
+  local rows = { [[<table width="100%" cellspacing="0" cellpadding="2" style="font-family:monospace;font-size:10pt">]] }
+  for _, e in ipairs(enemies) do
+    local pct  = tonumber(e.hp) or 0
+    local col  = shapeColor(pct)
+    local name = (e.name or "?"):gsub("[<>&]", { ["<"]="&lt;", [">"]="&gt;", ["&"]="&amp;" })
+    local bar  = string.rep("\xe2\x96\x88", math.floor(pct / 10))   -- █ blocks, 0..10
+    table.insert(rows, string.format(
+      [[<tr><td style="color:#ddd;padding-right:6px">%s</td>]]
+      .. [[<td style="color:%s;font-weight:bold">%s</td>]]
+      .. [[<td style="color:#888;text-align:right">%d%%</td></tr>]]
+      .. [[<tr><td colspan="3" style="color:#888;font-size:9pt;padding-bottom:4px">%s</td></tr>]],
+      name, col, bar, pct, e.shape or ""))
+  end
+  table.insert(rows, "</table>")
+  icesus.hud.enemyLabel:echo(table.concat(rows))
+end
+
+-- =============================================================
+-- GMCP handlers.
+-- =============================================================
+function icesus.onVitals()
+  local v = gmcp.Char and gmcp.Char.Vitals
+  if not v then return end
+  icesus.state.vitals.hp = tonumber(v.hp) or icesus.state.vitals.hp
+  icesus.state.vitals.sp = tonumber(v.sp) or icesus.state.vitals.sp
+  icesus.state.vitals.ep = tonumber(v.ep) or icesus.state.vitals.ep
+  icesus.refreshGauges()
+end
+
+function icesus.onMaxstats()
+  local v = gmcp.Char and gmcp.Char.Maxstats
+  if not v then return end
+  icesus.state.vitals.hpmax = tonumber(v.maxhp) or icesus.state.vitals.hpmax
+  icesus.state.vitals.spmax = tonumber(v.maxsp) or icesus.state.vitals.spmax
+  icesus.state.vitals.epmax = tonumber(v.maxep) or icesus.state.vitals.epmax
+  icesus.refreshGauges()
+end
+
+function icesus.onStatus()
+  local s = gmcp.Char and gmcp.Char.Status
+  if not s then return end
+  icesus.state.enemies = {}
+  if type(s.enemies) == "table" and s.enemies[1] then
+    for _, e in ipairs(s.enemies) do
+      table.insert(icesus.state.enemies, {
+        name  = e.name or "?",
+        hp    = tonumber(e.hp) or 0,
+        shape = e.shape or "",
+      })
+    end
+  elseif s.enemy and s.enemy ~= "" then
+    table.insert(icesus.state.enemies, {
+      name  = s.enemy,
+      hp    = tonumber(s.enemypct) or 0,
+      shape = "",
+    })
+  end
+  icesus.state.inCombat = (s.state == "combat")
+  icesus.refreshEnemies()
+end
+
+function icesus.onEnemyDeath()
+  local d = gmcp.Char and gmcp.Char.EnemyDeath
+  if not d or not d.name then return end
+  local kept = {}
+  for _, e in ipairs(icesus.state.enemies) do
+    if e.name ~= d.name then table.insert(kept, e) end
+  end
+  icesus.state.enemies = kept
+  icesus.refreshEnemies()
+end
+
+function icesus.onChannel()
+  local c = gmcp.Comm and gmcp.Comm.Channel
+  if not c or not icesus.hud or not icesus.hud.channels then return end
+  local mc   = icesus.hud.channels
+  local time = icesus.config.channelTimes and (os.date("%H:%M ")) or ""
+  local chan = c.chan or "?"
+  local who  = c.player or ""
+  local msg  = c.msg or ""
+  if who ~= "" then
+    mc:cecho(string.format("<grey>%s<reset><cyan>[%s]<reset> <yellow>%s<reset>: %s\n",
+      time, chan, who, msg))
+  else
+    mc:cecho(string.format("<grey>%s<reset><cyan>[%s]<reset> %s\n",
+      time, chan, msg))
+  end
+end
+
+-- =============================================================
+-- GMCP subscription. The Char and Comm modules cover everything
+-- this v0.1 needs: Vitals, Maxstats, Status, EnemyDeath, Channel.
+-- =============================================================
+function icesus.subscribeGMCP()
+  sendGMCP('Core.Supports.Set ["Char 1", "Char.Vitals 1", "Comm 1", "Room 1"]')
+end
+
+-- =============================================================
+-- Install / uninstall.
+-- =============================================================
+local function reg(event, fn)
+  table.insert(icesus.handlers, registerAnonymousEventHandler(event, fn))
+end
+
+function icesus.install()
+  icesus.uninstall()                            -- idempotent
+  icesus.setupHUD()
+  reg("gmcp.Char.Vitals",     icesus.onVitals)
+  reg("gmcp.Char.Maxstats",   icesus.onMaxstats)
+  reg("gmcp.Char.Status",     icesus.onStatus)
+  reg("gmcp.Char.EnemyDeath", icesus.onEnemyDeath)
+  reg("gmcp.Comm.Channel",    icesus.onChannel)
+  reg("sysConnectionEvent",   icesus.subscribeGMCP)
+  reg("sysExitEvent",         icesus.uninstall)
+  if isConnected and isConnected() then icesus.subscribeGMCP() end
+  cecho("\n<lime_green>Icesus<reset> package <yellow>v"
+    .. icesus.version .. "<reset> ready. "
+    .. "<grey>(GMCP HUD: vitals, enemies, channels)<reset>\n")
+end
+
+function icesus.uninstall()
+  if icesus.handlers then
+    for _, h in ipairs(icesus.handlers) do
+      pcall(killAnonymousEventHandler, h)
+    end
+    icesus.handlers = {}
+  end
+  icesus.teardownHUD()
+end
+
+icesus.teardown = icesus.uninstall
+
+icesus.install()
+    ]]></script>
+    <eventHandlerList>
+     <string>sysLoadEvent</string>
+     <string>sysInstall</string>
+    </eventHandlerList>
+   </Script>
+
+  </ScriptGroup>
+ </ScriptPackage>
+ <KeyPackage></KeyPackage>
+ <HelpPackage></HelpPackage>
+</MudletPackage>

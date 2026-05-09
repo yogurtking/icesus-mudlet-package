@@ -1,0 +1,11 @@
+# Built artefacts
+*.mpackage
+*.zip
+dist/
+
+# Editor noise
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
